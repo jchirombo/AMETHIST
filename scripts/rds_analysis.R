@@ -2,16 +2,23 @@ pacman::p_load(tidyverse,
                lubridate,
                RDS,
                arsenal,
-               pps)
+               stringr)
+
+# load functions
+source("scripts/rds_analysis_functions.R")
 
 rds_data <- read_csv("data/amethist_rds_survey_raw.csv")
-coupon_data <- read_csv("data/amethist_coupon_raw.csv")
+coupon_data <- read_csv("data/amethist_coupon_raw240522.csv")
 hiv_data <- read_csv("data/amethist_results_raw.csv")
+chlamydia_data <- read_csv("data/chlamydia_data.csv")
 
 # some data management
 # seeds
 k <- which(coupon_data$ctype==1)
 seedID <- coupon_data[k,"pid"]$pid
+
+# isolate and remove some rows
+#coupon_data <- coupon_data[-c(8,27),]
 
 # function to organize data into rds format
 get_recruiter_id <- function(data){
@@ -27,17 +34,23 @@ get_recruiter_id <- function(data){
   return(idx)
 }
 
-recruit_id2 <- rep(NA,length = nrow(coupon_data))
-for(i in 1:nrow(coupon_data)){
-  x <- which(coupon_data$recruit_id[i] == coupon_data$seed_coupon1|coupon_data$recruit_id[i] == coupon_data$seed_coupon2)
-  if(length(x)==0){
-    recruit_id2[i] <- "Seed" 
-  } else {
-    recruit_id2[i] <- coupon_data$pid[x]
-  }
-}
-recruit_id2
-seed_val <- coupon_data[,c("pid","recruit_id","seed_coupon1","seed_coupon2")]
+coupon_data_final <- coupon_data %>%
+  add_column(recruit_id2=get_recruiter_id(data = coupon_data),.after="recruit_id") %>%
+  select(pin,data_date,pid,recruit_id2) %>%
+  rename(recruit_id=recruit_id2)
+
+
+#recruit_id2 <- rep(NA,length = nrow(coupon_data))
+#for(i in 1:nrow(coupon_data)){
+#  x <- which(coupon_data$recruit_id[i] == coupon_data$seed_coupon1|coupon_data$recruit_id[i] == coupon_data$seed_coupon2)
+#  if(length(x)==0){
+#    recruit_id2[i] <- "Seed" 
+#  } else {
+#    recruit_id2[i] <- coupon_data$pid[x]
+#  }
+#}
+#recruit_id2
+#seed_val <- coupon_data[,c("pid","recruit_id","seed_coupon1","seed_coupon2")]
 
 rds <- rds_data %>%   
   rename(sex_pst_mnth=elig01,knwDOB=elig02,compltsvy=elig03,lengthstay=elig04,findplace=elig05a,
@@ -282,22 +295,201 @@ hivdata <- hiv_data %>%
   mutate(hivstatus=factor(ifelse(hivresult==1,"Positive","Negative"),levels = c("Positive","Negative")),
          syphstatus=factor(ifelse(syphresult==1,"Positive","Negative"),levels = c("Positive","Negative")))
   
-  
+# process chlamydia data
+chlamydia <- chlamydia_data %>%
+  select(PATIENT_CODE,PATIENT_BIRTH,RESULT_TEST_NAME,RESULT) %>%
+  rename(pid=PATIENT_CODE,DOB=PATIENT_BIRTH,test_name=RESULT_TEST_NAME,result=RESULT)%>%
+  mutate(DOB=as.Date(DOB,format="%d/%m/%Y")) %>%
+  mutate(result=factor(result,levels = c("Detected","Not Detected"))) %>%
+  mutate(pid=gsub("-","",pid))
+
+# RDS098 and RDS04111 not available in the main data
+
+U <- left_join(hivdata,rds,by="pid") %>% 
+  left_join(.,coupon_data_final,by="pid") %>%
+  left_join(.,chlamydia) %>%
+  select(-data_date.x,-deviceid,-odk_id,-odk_subdate,-data_date.y,-pin.y,-pin.x,-project_dsid)
+
+
 # merge rds and hiv results data
-rdsfinal <- left_join(hivdata,rds,by="pid")
-
-## ------------------------------------------------------------------------------------------------------------------
+#rdsfinal <- left_join(hivdata,rds,by="pid")
+rdsfinal <- left_join(hivdata,rds,by="pid") %>% 
+  left_join(.,coupon_data_final,by="pid") %>%
+  select(-data_date.x,-deviceid,-odk_id,-odk_subdate,-data_date.y,-pin.y,-pin.x,-project_dsid)
+  
 ## -----------------------------------RDS diagnostics----------------------------------------------------------------
-dat_rds <- rds %>%
-  select(pid,sexworkerKnow,seedInfo) %>%
-  rename(networksize=sexworkerKnow) %>%
-  mutate(maxcoupon=3) %>%
-  filter(!is.na(pid)) %>%
-  add_column(idx=1:nrow(dat_rds),.before = "pid")
+# stratify the ages by two age groups
+rdsfinal <- rdsfinal %>%
+  mutate(age=factor(ifelse(calc_age<=30,"Young","Adult"),levels = c("Young","Adult")))
 
-dat_rds$pid[dat_rds$seedInfo=="seed"] <- 0
-M <- as.rds.data.frame(dat_rds,id="idx",recruiter.id = "pid",max.coupons = "maxcoupon",network.size = "networksize")
-# demographic characteristics
+# make chains for RDS0536 and RDS0544 for now until issue resolved
+# assign random recruiters
+j <- c(55,60,62,63)
+finaldata <- rdsfinal
+#finaldata[j,"recruit_id"] <- c("RDS0387","RDS0387","RDS0270","RDS270")
+finaldata[j,"recruit_id"] <- c("RDS0387","RDS0494","RDS0270","RDS0304")
+
+datRDS <- as.rds.data.frame(finaldata,id="pid",recruiter.id = "recruit_id",network.size = "sexworkerKnow")
+datRDS$wave <- get.wave(datRDS)
+datRDS$seed <- get.seed.id(datRDS)
+tiff("images/recruitment_tree.tif",width = 35*0.39,height = 30*0.39,units = "in",compression = "lzw",res = 500)
+par(mfrow=c(1,1),mar=c(2,2,2,2))
+set.seed(7445)
+reingold.tilford.plot(datRDS,
+                      vertex.label.cex = 2,
+                      #vertex.size = "sexworkerKnow",
+                      vertex.color = "hivstatus",
+                      vertex.label =  NA)
+dev.off()
+
+make_reingold_tilford_plot <- function(rds.data,stratify.var,seed=NULL){
+  if(is.null(seed)){
+    set.seed(9024)
+  }
+  reingold.tilford.plot(rds.data,
+                             vertex.label.cex = 2,
+                             vertex.color = stratify.var,
+                             vertex.label = NA)
+}
+#make_reingold_tilford_plot(datRDS,stratify.var = "hivstatus")
+#make_reingold_tilford_plot(datRDS,stratify.var = "age")
+
+# create and save recruitment trees
+tiff("images/recruitment_tree_age.tif",width = 35*0.39,height = 30*0.39,units = "in",compression = "lzw",res = 500)
+par(mfrow=c(1,1),mar=c(2,2,2,2))
+make_reingold_tilford_plot(datRDS,stratify.var = "agecat")
+dev.off()
+
+# education
+tiff("images/recruitment_tree_educ.tif",width = 35*0.39,height = 30*0.39,units = "in",compression = "lzw",res = 500)
+par(mfrow=c(1,1),mar=c(2,2,2,2))
+make_reingold_tilford_plot(datRDS,stratify.var = "educ")
+dev.off()
+
+# location
+tiff("images/recruitment_tree_bar.tif",width = 35*0.39,height = 30*0.39,units = "in",compression = "lzw",res = 500)
+par(mfrow=c(1,1),mar=c(2,2,2,2))
+make_reingold_tilford_plot(datRDS,stratify.var = "findbar")
+dev.off()
+
+# bar location
+tiff("images/recruitment_tree_lodge.tif",width = 35*0.39,height = 30*0.39,units = "in",compression = "lzw",res = 500)
+par(mfrow=c(1,1),mar=c(2,2,2,2))
+make_reingold_tilford_plot(datRDS,stratify.var = "lodgefind")
+dev.off()
+
+# marital status
+tiff("images/recruitment_tree_marstatus.tif",width = 35*0.39,height = 30*0.39,units = "in",compression = "lzw",res = 500)
+par(mfrow=c(1,1),mar=c(2,2,2,2))
+make_reingold_tilford_plot(datRDS,stratify.var = "marstatus")
+dev.off()
+
+# syphilis
+tiff("images/recruitment_tree_syphilis.tif",width = 35*0.39,height = 30*0.39,units = "in",compression = "lzw",res = 500)
+par(mfrow=c(1,1),mar=c(2,2,2,2))
+make_reingold_tilford_plot(datRDS,stratify.var = "syphstatus")
+dev.off()
+
+# diagnostic plots
+
+
+
+
+d1 <- plot(datRDS,plot.type = "Recruits by wave",stratify.by = "age")
+d2 <- plot(datRDS,plot.type = "Recruits per seed",stratify.by = "hivstatus")
+d3 <- plot(datRDS,plot.type = "Recruits per subject")
+d4 <- plot(datRDS,plot.type = "Network size by wave",stratify.by = "hivstatus")
+
+cowplot::plot_grid(d2)
+ggsave("images/diagnostic_plots.tiff",width = (35*0.39),height = (28*0.39),units = "in",compression="lzw")
+
+#------------------------------------------------ RDS outcome estimates ------------------------------------------
+#rds_estim_I <- RDS.I.estimates(datRDS,outcome.variable = "hivstatus")
+rds_estim_hiv <- RDS.II.estimates(datRDS,outcome.variable = "hivstatus")
+
+rds_estim_syph <- RDS.II.estimates(datRDS,outcome.variable = "syphstatus")
+
+# ----------------------------------------------- homophily analysis ---------------------------------------------
+homophily.estimates(datRDS,
+                    outcome.variable = "hivstatus",
+                    recruitment = F,
+                    weight.type = "RDS-II",
+                    N = 1000
+                    )
+
+get_homophily_estimates <- function(rds.data,outcome.var,estim.type=c("RDS-I","RDS-II"),recruitment=T){
+  homophily.estimates(rds.data,
+                      outcome.variable = outcome.var,
+                      recruitment = recruitment,
+                      weight.type = estim.type,
+                      N = 1000)
+}
+
+get_homophily_estimates(rds.data = datRDS,outcome.var = "hivstatus", estim.type = "RDS-II",recruitment = T)
+get_homophily_estimates(rds.data = datRDS,outcome.var = "syphstatus", estim.type = "RDS-II",recruitment = T)
+get_homophily_estimates(rds.data = datRDS,outcome.var = "marstatus", estim.type = "RDS-II",recruitment = T)
+get_homophily_estimates(rds.data = datRDS,outcome.var = "findbar",estim.type = "RDS-II",recruitment = T)
+get_homophily_estimates(rds.data = datRDS,outcome.var = "lodgefind",estim.type = "RDS-II",recruitment = T)
+
+# convergence plot for hiv
+rds_convergence_plot(datRDS,
+                 outcome.variable = "hivstatus",
+                 est.func = RDS.II.estimates,
+                 n.eval.points = 30,
+                 plot.title = "HIV")
+ggsave("images/convergence_hiv.tiff",width = 400,height = 450,compression="lzw",units="mm")
+
+# convergence for syphilis
+rds_convergence_plot(datRDS,
+                     outcome.variable = "syphstatus",
+                     est.func = RDS.II.estimates,
+                     n.eval.points = 30,
+                     plot.title = "Syphilis")
+ggsave("images/convergence_syphilis.tiff",width = 400,height = 450,compression="lzw",units="mm")
+
+
+bottleneck.plot(datRDS,
+                outcome.variable = "syphstatus",
+                est.func = RDS.II.estimates)
+# -------------------------------- tests of independence -----------------------------------------------------------
+bootstrap.contingency.test(datRDS,
+                           row.var = "age",
+                           col.var = "syphstatus",
+                           number.of.bootstrap.samples = 1500,
+                           weight.type = "RDS-II",
+                           verbose = T)
+
+make_bootstrap_contingency_test <- function(rds_data,row_var,col_var,nsim){
+  car_test <- bootstrap.contingency.test(datRDS,
+                             row.var = row_var,
+                             col.var = col_var,
+                             number.of.bootstrap.samples = nsim,
+                             weight.type = "RDS-II",
+                             verbose = T)
+  return(car_test)
+}
+make_bootstrap_contingency_test(rds_data = datRDS,row_var = "age",col_var = "hivstatus",nsim = 1000)
+make_bootstrap_contingency_test(rds_data = datRDS,row_var = "agecat",col_var = "hivstatus",nsim = 1000)
+
+# -------------------------------- estimate incidence -------------------------------------------------------------
+bootstrap.incidence(datRDS,
+                    recent.variable = "hivresult",
+                    hiv.variable = "hivresult",
+                    weight.type = "RDS-II",
+                    number.of.bootstrap.samples = 100)
+
+##  ---------------------------------- Baseline characteristics -----------------------------------------------------
+
+#dat_rds <- rds %>%
+#  select(pid,sexworkerKnow,seedInfo) %>%
+#  rename(networksize=sexworkerKnow) %>%
+#  mutate(maxcoupon=3) %>%
+#  filter(!is.na(pid)) %>%
+#  add_column(idx=1:nrow(dat_rds),.before = "pid")
+
+#dat_rds$pid[dat_rds$seedInfo=="seed"] <- 0
+#M <- as.rds.data.frame(dat_rds,id="idx",recruiter.id = "pid",max.coupons = "maxcoupon",network.size = "networksize")
+# 
 # baseline tables
 tabcontrols  <- tableby.control(test=F, total=TRUE,
                                 numeric.test="kwt", cat.test="fe",  
@@ -328,10 +520,10 @@ tablabs <- list(calc_age="Age",lengthstay="Length of stay",
                 sexworkerSeen="Sex seen in past month",
                 sexworkerRecruit="Sex worker recruited")
 
-tab1 <- tableby(hivstatus~calc_age+agecat+syphstatus+marstatus+lengthstay+findbar+findonline+mrktfind+trucksfind+
+tab1 <- tableby(wave~calc_age+agecat+syphstatus+marstatus+lengthstay+findbar+findonline+mrktfind+trucksfind+
                   lodgefind+educ+knwpersoncoupon+sexworkerKnow +
                   sexworkerSeen + sexworkerRecruit,
-                data = rdsfinal,control = tabcontrols)
+                data = datRDS,control = tabcontrols)
 U = summary(tab1,labelTranslations = tablabs,text = T)
 write2word(U,"baseline_table_characteristics.doc")
 
@@ -596,3 +788,15 @@ diary_data_neg <- rdsfinal %>%
 
 diary_data <- bind_rows(diary_data_neg,diary_data_pos)
 write.csv(diary_data,"data/diary_data.csv",row.names = F)
+
+# remaining participants
+k <- which(rdsfinal$pid %in% setdiff(rdsfinal$pid,diary_data$pid))
+dataRemain <- rdsfinal[k,]
+set.seed(45)
+dataRemainPos <- dataRemain %>%
+  filter(hivstatus=="Positive") 
+
+write.csv(dataRemainPos,"data/hivposData.csv",row.names = F)
+dataRemainNeg <- dataRemain %>%
+  filter(hivstatus=="Negative")
+write.csv(dataRemainNeg,"data/hivnegData.csv",row.names = F)
