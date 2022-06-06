@@ -14,7 +14,7 @@ get_recruiter_id <- function(data){
 
 # function to generate convergence  plot
 rds_convergence_plot <- function (rds.data, outcome.variable, est.func = RDS.II.estimates, 
-          as.factor = FALSE, n.eval.points = 25, ...){
+          as.factor = FALSE, n.eval.points = 25, plot.title, ...){
   if (as.factor) {
     for (o in outcome.variable) {
       rds.data[[o]] <- as.factor(rds.data[[o]])
@@ -38,14 +38,14 @@ rds_convergence_plot <- function (rds.data, outcome.variable, est.func = RDS.II.
       rownames(e) <- attr(e, "n")
       dat <- melt(e)
       datl <- melt(e[nrow(e), , drop = FALSE])
-      p <- ggplot(dat) + geom_line(aes(x = Var1, color = as.factor(Var2), y = value,size=1.5)) + 
+      p <- ggplot(dat) + geom_line(aes(x = Var1, color = as.factor(Var2), y = value),size=2) + 
         scale_color_hue(nm) + 
         ylab("Estimate") + 
         xlab("Number of Observations") + scale_y_continuous(limits = c(0,1)) + 
         theme_bw() +
-        theme(axis.text = element_text(size = 20),
-              axis.title = element_text(size = 20))
-      p <- p + geom_hline(data = datl, aes(yintercept = value, 
+        theme(axis.text = element_text(size = 38),
+              axis.title = element_text(size = 38))
+      p <- p + geom_hline(data = datl, aes(yintercept = value,
                                            color = as.factor(Var2)), linetype = 2, alpha = 0.5)
       p
     }
@@ -58,16 +58,17 @@ rds_convergence_plot <- function (rds.data, outcome.variable, est.func = RDS.II.
         c(0, 1)
       else range(v, na.rm = TRUE)
       p <- ggplot(dat) + geom_line(aes(x = Var1, y = value)) + 
-        ylab(paste("Estimated", nm)) + xlab("Number of Observations") + 
+        ylab(paste("Estimated", "Proportion")) + xlab("Number of Observations") + 
+        labs(title = plot.title)+
         scale_y_continuous(limits = rng) + theme_bw() +
-        theme(axis.title = element_text(size = 20),
-              axis.text = element_text(size = 20))
+        theme(axis.title = element_text(size = 38),
+              axis.text = element_text(size = 38),
+              plot.title = element_text(size = 38))
       p <- p + geom_hline(data = datl, aes(yintercept = value), 
                           linetype = 2, alpha = 0.5)
       p
     }
-    return(p + ggtitle(paste("Convergence plot of", 
-                             nm)))
+    return(p)
   }
   plots <- lapply(1:length(outcome.variable), make.plot)
   do.call(gridExtra::grid.arrange, plots)
@@ -93,4 +94,13 @@ make_bootstrap_contingency_test <- function(rds_data,row_var,col_var,nsim){
                                          weight.type = "RDS-II",
                                          verbose = T)
   return(car_test)
+}
+
+# function to estimate recruitment and population homophily
+get_homophily_estimates <- function(rds.data,outcome.var,estim.type=c("RDS-I","RDS-II"),recruitment=T){
+  homophily.estimates(rds.data,
+                      outcome.variable = outcome.var,
+                      recruitment = recruitment,
+                      weight.type = estim.type,
+                      N = 1000)
 }
