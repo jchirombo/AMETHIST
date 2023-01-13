@@ -262,7 +262,7 @@ make_bottleneck_plot <- function(rds.data, outcome.variable, est.func = RDS.II.e
           legend.position = "bottom")
 }
 
-# function for convergence
+# new function for convergence
 
 plot_rds_estim_convergence <- function(rds.data,outcome.variable,plot.type=c("ggplot","base")){
   estim_mat <- RDS::cumulative.estimate(rds.data,outcome.variable)
