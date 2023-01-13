@@ -1,3 +1,4 @@
+rm(list = ls())
 pacman::p_load(tidyverse,
                lubridate,
                RDS,
@@ -7,24 +8,26 @@ pacman::p_load(tidyverse,
                tmap,sf,
                tmaptools,
                htmlwidgets)
-
+      
 # load functions
 source("scripts/rds_analysis_functions.R")
 
 rds_data <- read_csv("data/amethist_rds_survey_raw.csv")
 coupon_data <- read_csv("data/amethist_coupon_raw240522.csv")
 hiv_data <- read_csv("data/amethist_results_raw.csv")
+results_data <- read_csv("data/AMETHEIST_result_file.csv")
 chlamydia_data <- read_csv("data/chlamydia_data.csv")
 pts <- read_csv("data/Pakachere _MLW _coords.csv")
 locator_data <- read_csv("data/amethist_locator_final.csv")
+location <- read_csv("data/Locator_Data_TG.csv")
 blantyre <- st_read("data/blantyre_shapefiles/blantyre_district_boundary.shp")
 blantyre_city <- st_read("data/blantyre_shapefiles/blantyre_city_boundary.shp")
 
 # process spatial data
 spatial_dat_dir <- "C:/Users/jchirombo/Dropbox/GIS_malawi/Enumeration areas 2018"
 spatial_dat <- st_read(paste(spatial_dat_dir,"2018_Malawi_Enumeration_Areas.shp",sep="/"))
-spatial_BT_city <- spatial_dat |>
-  filter(DIST_NAME == "Blantyre City") |>
+spatial_BT_city <- spatial_dat %>%
+  filter(DIST_NAME == "Blantyre City") %>%
   st_transform(4326)
 
 ndirande <- filter(spatial_BT_city, TA_NAME %in% c("Ndirande Matope Ward","Ndirande Makata Ward","Ndirande Gamulani Ward")) %>%
@@ -40,29 +43,119 @@ spatial_BT_rural <- spatial_dat |>
   filter(DIST_NAME == "Blantyre") |>
   st_transform(4326) 
 
-# blantyre locations
-blantyre_pts <- st_as_sf(pts,coords = c("Latitude","Longitude"),crs=4326)
+# malawi districts and extract Blantyre rural and urban
+mw_districts <- st_read("data/malawi/District.shp")
 
+mw_districts <- st_set_crs(mw_districts,32736) %>%
+  st_transform(4326)
+
+# blantyre locations
+blantyre_pts <- st_as_sf(pts,coords = c("Longitude","Latitude"),crs=4326)
+
+# plot locations
+
+#blantyre_pts$Institution <- factor(blantyre_pts$Institution)
+blantyre_study_pts <- blantyre_pts %>%
+  mutate(Institution = factor(Institution)) %>%
+  mutate(Label = case_when(
+    Label == "Market" ~ "Market/Street/Other",
+    Label == "Street" ~ "Market/Street/Other",
+    Label == "Others" ~ "Market/Street/Other",
+    Label == "Shabeen with lodging" ~ "Shabeen/Tavern",
+    Label == "Shabeen without lodging" ~ "Shabeen/Tavern",
+    Label == "Tarven" ~ "Shabeen/Tavern",
+    Label == "Bar with lodging" ~ "Bar-lodging",
+    Label == "Bar without lodging" ~ "Bar-no lodging",
+    Label == "Rest house/lodge" ~ "Resthouse/Lodge"
+  ))
+tm_shape(blantyre) +
+  tm_polygons(border.col = "black") +
+tm_shape(blantyre_city) +
+  tm_polygons(border.col = "black") +
+tm_shape(blantyre_pts) +
+  tm_dots("Institution",size = 1,palette = c("red","blue"))
+
+# plot by label
+tm_shape(blantyre) +
+  tm_polygons(border.col = "black",lwd=2) +
+  tm_shape(blantyre_city) +
+  tm_polygons(border.col = "black") +
+  tm_shape(blantyre_pts) +
+  tm_dots("Label",size = 1)
+
+plot_fsw_location <- function(plot.var=c("Institution","Label")){
+  plot.var <- match.arg(plot.var)
+  if(plot.var == "Institution"){
+    tm_shape(blantyre) +
+      tm_polygons(border.col = "black",col = "white",lwd = 2) +
+      tm_shape(blantyre_city) +
+      tm_polygons(border.col = "black",lwd = 2,col = "white") +
+      tm_shape(blantyre_study_pts) +
+      tm_dots(plot.var,size = 0.8,palette = c("lightsalmon","steelblue"))+
+      tm_scale_bar(position = c("right","bottom"),text.size = 1.5,width = 3) +
+      tm_layout(frame = T,
+                asp = 1,
+                frame.lwd = 3,
+                legend.text.size = 1.5,
+                legend.title.size = 1.5)
+  } else{
+    nc <- n_distinct(blantyre_study_pts$Label)
+    tm_shape(blantyre) +
+      tm_polygons(border.col = "black",col = "white") +
+      tm_shape(blantyre_city) +
+      tm_polygons(border.col = "black",col = "white") +
+      tm_shape(blantyre_study_pts) +
+      tm_dots(plot.var,size = 0.8,palette = RColorBrewer::brewer.pal(nc,"Paired")) +
+      tm_scale_bar(position = c("left","bottom"),text.size = 1.5,width = 3) +
+      tm_layout(frame = T,
+                asp = 1,
+                frame.lwd = 3,
+                legend.outside = TRUE,
+                legend.text.size = 1.5,
+                legend.title.size = 1.5)
+  }
+}
+
+plot_fsw_location(plot.var = "Label")
+plot_fsw_location(plot.var = "Institution")
+
+# plot relative frequency of the various locations
+location_freq <- blantyre_study_pts %>%
+  group_by(Label) %>%
+  summarise(n = n()) %>%
+  mutate(prop = n/sum(n)*100)
+
+
+ggplot(location_freq,aes(x = Label, y = prop)) +
+  geom_bar(stat = "identity",fill = "steelblue") +
+  ylim(0,100) +
+  theme_bw() +
+  coord_flip() +
+  labs(x = "",y = "Proportion") +
+  scale_x_discrete(limits = rev) +
+  theme(axis.text = element_text(size = 20),
+        axis.title = element_text(size = 20))
+  
 # plot interactive maps
 
-BT_areas <- leaflet() %>%
-  setView(lat = -15.77,lng = 35.04,zoom = 5) %>%
-  addTiles() %>%
-  addPolylines(data = bangwe,color = "#9c2b86",fillOpacity = 0.3) %>%
-  addPolylines(data = ndirande,color = "#9c2b86",fillOpacity = 0.3) %>%
-  addPolylines(data = mbayani,color = "#9c2b86",fillOpacity = 0.3) %>%
-  addMarkers(lat = pts$Latitude,lng = pts$Longitude,label = pts$Institution,labelOptions = labelOptions(noHide = FALSE,textsize = "16px"))
+#BT_areas <- leaflet() %>%
+#  setView(lat = -15.77,lng = 35.04,zoom = 5) %>%
+#  addTiles() %>%
+#  addPolylines(data = bangwe,color = "#9c2b86",fillOpacity = 0.3) %>%
+#  addPolylines(data = ndirande,color = "#9c2b86",fillOpacity = 0.3) %>%
+#  addPolylines(data = mbayani,color = "#9c2b86",fillOpacity = 0.3) %>%
+#  addMarkers(lat = pts$Latitude,lng = pts$Longitude,label = pts$Institution,labelOptions = labelOptions(noHide = FALSE,textsize = "16px"))
 
-saveWidget(BT_areas,"data/hotspot_areas.html")
+#saveWidget(BT_areas,"data/hotspot_areas.html")
 
 
 # plot locations
-bt_bbox <- st_bbox(blantyre_city)
-osm_base <- read_osm(bt_bbox)
-tm_shape(blantyre_city) +
-  tm_polygons() +
-  tm_shape(blantyre_pts) +
-  tm_symbols()
+#bt_bbox <- st_bbox(blantyre_city)
+#osm_base <- read_osm(bt_bbox)
+#tm_shape(blantyre_city) +
+#  tm_polygons() +
+#  tm_shape(blantyre_pts) +
+#  tm_symbols()
 
 # ----------------------- process locator data ----------------------------------------
 
@@ -78,19 +171,6 @@ seedID <- coupon_data[k,"pid"]$pid
 # isolate and remove some rows
 #coupon_data <- coupon_data[-c(8,27),]
 
-# function to organize data into rds format
-get_recruiter_id <- function(data){
-  idx <- rep(NA,length(nrow(data)))
-  for(i in 1:nrow(data)){
-    j <- which(data$recruit_id[i] == data$seed_coupon1|data$recruit_id[i] == data$seed_coupon2)
-    if(length(j)==0){
-      idx[i] <- "Seed" 
-    } else {
-      idx[i] <- data$pid[j]
-    }
-  }
-  return(idx)
-}
 
 # add recruiter id column
 coupon_data_final <- coupon_data %>%
@@ -340,9 +420,9 @@ rds <- rds_data %>%
     n01==0 ~ "Never",
     n01==1 ~ "Once a month or less",
     n01==2 ~ "2-4 times/month",
-    n01==3 ~ "2-3 times/week",
-    n01==4 ~ ">=4 times/week"
-  ),levels = c("Never","Once a month or less","2-4 times/month","2-3 times/week",">=4 times/week"))) %>%
+    n01==3 | n01==4 ~ ">=2 times/week"
+    #n01==4 ~ ">=2 times/week"  # combine groups
+  ),levels = c("Never","Once a month or less","2-4 times/month",">=2 times/week"))) %>%
   mutate(drink_dy=factor(case_when(
     n02==0 ~ "1 or 2",
     n02==1 ~ "3 or 4",
@@ -356,14 +436,77 @@ rds <- rds_data %>%
     n03==3 ~ "Weekly",
     n03==4 ~ "Daily or almost daily",
     n03==5 ~ "Other"),levels = c("Never","Less than montly","Monthly","Weekly","Daily or almost daily","Other"))) %>%
-  mutate(agegrp = ifelse(calc_age <= 25,1,2))
-  
+  mutate(agegrp = factor(ifelse(calc_age <= 25,1,2))) %>%
+  mutate(num_sex=i01) %>%
+  mutate(condomuse=factor(ifelse(i02==1,"Yes","No"),levels = c("Yes","No"))) %>%
+  mutate(condm_2wk = factor(case_when(
+    i03==0 ~ "No",
+    i03==1 ~ "Yes",
+    i03==888 ~ "Don't remember"
+  ),levels = c("Yes","No","Don't remember"))) %>%
+  mutate(num_anal_sex=i04) %>%
+  mutate(condm_anal=factor(ifelse(i05==1,"Yes","No"),levels = c("Yes","No"))) %>%
+  mutate(condm_anal_2wk=factor(ifelse(i06==1,"Yes","No"),levels = c("Yes","No"))) %>%
+  mutate(stdy_prtner=factor(case_when(
+    i07==1 ~ "Yes",
+    i07==0 ~ "No",
+    i07==2 ~ 'Never'
+  ),levels = c("Yes","No","Never"))) %>%
+  mutate(stdy_prtner_len=i08) %>%
+  mutate(stdy_prtner_freq=i09) %>%
+  mutate(stdy_prtner_condm=factor(case_when(
+    i10==1 ~ "Always",
+    i10==2 ~ "Mostly",
+    i10==3 ~ "Sometimes",
+    i10==4 ~ "Rarely",
+    i10==0 ~ "Never"
+  ),levels = c("Never","Rarely","Sometimes","Mostly","Always"))) %>%
+  mutate(stdy_prtner_condm_last = factor(ifelse(i11==1,"Yes","No"),levels = c("Yes","No"))) %>%
+  mutate(stdy_prtner_3m=factor(ifelse(i12==1,"Yes","No"),levels = c("Yes","No"))) %>%
+  mutate(stdy_prtner_hiv = factor(case_when(
+    i13==0 ~ "HIV -ve",
+    i13==1 ~ "HIV +ve",
+    i13==888 ~ "Don't know"
+  ),levels = c("HIV +ve","HIV -ve","Don't know"))) %>%
+  mutate(stdy_prtner_trt=factor(case_when(
+    i14==1 ~ "Yes",
+    i14==0 ~ "No",
+    i14==888 ~ "Don't know"
+  ),levels = c("Yes","No","Don't know"))) %>%
+  mutate(stdy_prtner_hiv_condm=factor(ifelse(i15==1,"Yes","No"),levels = c("Yes","No"))) %>%
+  mutate(stdy_prtner_num=i16) %>%
+  mutate(stdy_prtner_num_condm=i17) %>%
+  mutate(num_clients=i18) %>%
+  mutate(num_rate=factor(case_when(
+    i19==0 ~ "More",
+    i19==1 ~ "Average",
+    i19==2 ~ "Less",
+    i19==888 ~ "Don't know"
+  ),levels = c("Less","Average","More","Don't know"))) %>%
+  mutate(clients_sex_new=i20) %>%
+  mutate(client_rpt=factor(ifelse(i21==1,"Yes","No"),levels = c("Yes","No"))) %>%
+  mutate(client_rpt_freq=factor(case_when(
+    i22==1 ~ ">1/week",
+    i22==2 ~ "Once/week",
+    i22==3 ~ "2-3/month",
+    i22==4 ~ "Once/month",
+    i22==5 ~ "<1/month",
+    i22==6 ~ "1-2 times only"),levels = c("1-2 times only","<1/month","Once/month","2-3/month","Once/week",">1/week"))) %>%
+  mutate(condm_new_client=factor(ifelse(i24==1,"Yes","No"),levels = c("Yes","No"))) %>%
+  mutate(condm_rpt_client=factor(ifelse(i25==1,"Yes","No"),levels = c("Yes","No"))) %>%
+  mutate(condom_freq_clients=factor(case_when(
+    i26==1 ~ "Always",
+    i26==2 ~ "Mostly",
+    i26==3 ~ "Sometimes",
+    i26==4 ~ "Rarely",
+    i26==0 ~ "Never"),levels = c("Never","Rarely","Sometimes","Mostly","Always")))
+
 # process hiv result data
 hivdata <- hiv_data %>%
   select(data_date,pid,syphresult,determine,unigold,hivresult) %>%
   mutate(data_date=as.Date(data_date,format="%d%b%Y")) %>%
   mutate(hivstatus=factor(ifelse(hivresult==1,"Positive","Negative"),levels = c("Positive","Negative"))) %>%
-  mutate(syphstatus=factor(ifelse(syphresult==1,"Positive","Negative"),levels = c("Positive","Negative")))
+  mutate(syphstatus=factor(ifelse(syphresult==1,"Positive","Negative"),levels = c("Positive","Negative"))) 
   
 # process chlamydia data
 chlamydia <- chlamydia_data %>%
@@ -374,30 +517,35 @@ chlamydia <- chlamydia_data %>%
   mutate(pid=gsub("-","",pid))
 
 # gonorrhea
-gonorrhea_test <- chlamydia %>%
-  filter(test_name=="Chlamydia trachomatis (CT)")
+gonorrhea_test_data <- chlamydia %>%
+  filter(test_name=="Neisseria gonorrhoeae (NG)") %>%
+  rename(gono_test=test_name) %>%
+  rename(gono_result=result)
 
-chlamydia_test <- chlamydia %>%
-  filter(test_name=="Neisseria gonorrhoeae (NG)")
+chlamydia_test_data <- chlamydia %>%
+  filter(test_name=="Chlamydia trachomatis (CT)") %>%
+  rename(chla_test=test_name) %>%
+  rename(chlam_result=result)
+  #mutate(result2==ifelse(result=="Detected","Positive","Negative"),levels = c("Negative","Positive"))
+
 # RDS098 and RDS04111 not available in the main data
 
-U <- left_join(hivdata,rds,by="pid") %>% 
-  left_join(.,coupon_data_final,by="pid") %>%
-  left_join(.,chlamydia) %>%
-  select(-data_date.x,-deviceid,-odk_id,-odk_subdate,-data_date.y,-pin.y,-pin.x,-project_dsid)
+#U <- left_join(hivdata,rds,by="pid") %>% 
+#  left_join(.,coupon_data_final,by="pid") %>%
+#  left_join(.,chlamydia_test,by="pid") %>% 
+#  left_join(.,gonorrhea_test,by="pid") %>%
+#  select(-data_date.x,-deviceid,-odk_id,-odk_subdate,-data_date.y,-pin.y,-pin.x,-project_dsid)
 
 
 # merge rds and hiv results data
 #rdsfinal <- left_join(hivdata,rds,by="pid")
 rdsfinal <- left_join(hivdata,rds,by="pid") %>% 
   left_join(.,coupon_data_final,by="pid") %>%
-  left_join(.,locator_data,by="pid") %>%
+  left_join(.,location,by="pid") %>%
+  left_join(.,chlamydia_test_data,by="pid") %>%
+  left_join(.,gonorrhea_test_data,by="pid") %>%
   select(-data_date.x,-deviceid,-odk_id,-odk_subdate,-data_date.y,-pin.y,-pin.x,-project_dsid)
 
-# perform another merge
-datlist <- list(rds,hivdata,coupon_data_final)
-datamerge <- datlist %>%
-  reduce(left_join,by="pid")
 # ------------------------------------ regroup some locations to get bigger numbers ---------------------------------
 
 ## -----------------------------------RDS diagnostics----------------------------------------------------------------
@@ -414,14 +562,14 @@ finaldata[j,"recruit_id"] <- c("RDS0494","RDS0494","RDS0502","RDS0502")
 
 # -------------------------------------------------------------------------------------------------------------------
 # combine some locations to obtain bigger numbers
-finaldata$locxn[finaldata$locxn=="BCA"] <- "Bangwe"
+#finaldata$locxn[finaldata$locxn=="BCA"] <- "Bangwe"
 finaldata$locxn[finaldata$locxn=="Bvumbwe"] <- "Chigumula"
 finaldata$locxn[finaldata$locxn=="Chazunda"] <- "Chadzunda"
 finaldata$locxn[finaldata$locxn=="Chemusa"] <- "Mbayani"
 finaldata$locxn[finaldata$locxn=="Nancholi"] <- "Manase"
-finaldata$locxn[finaldata$locxn=="Chichiri"] <- "Blantyre"
-finaldata$locxn[finaldata$locxn=="Chirimba"] <- "Mbayani"
-finaldata$locxn[finaldata$locxn=="Mpingwe"] <- "Machinjiri"
+#finaldata$locxn[finaldata$locxn=="Chichiri"] <- "Blantyre"
+#finaldata$locxn[finaldata$locxn=="Chirimba"] <- "Mbayani"
+#finaldata$locxn[finaldata$locxn=="Mpingwe"] <- "Machinjiri"
 finaldata$locxn[finaldata$locxn=="Chiwembe"] <- "Soche (Manje)" # consider combining soche, chilobwe and zingwangwa
 finaldata$locxn[finaldata$locxn=="Mpemba"] <- "Manase"
 finaldata$locxn[finaldata$locxn=="Chadzunda"] <- "Zingwangwa"
@@ -433,12 +581,13 @@ finaldata$locxn[finaldata$locxn=="Chilomoni"] <- "Blantyre"
 
 
 # combine topology
-#finaldata$topology[finaldata$topology=="Social Media"] <- "Home based"
-finaldata$topology[finaldata$topology=="Manase (Kampala)"] <- "Venue based"
-finaldata$topology[finaldata$topology=="VENUE BASED"] <- "Venue based"
-finaldata$topology[finaldata$topology=="STREET BASED"] <- "Street based"
-finaldata$topology[finaldata$topology=="HOME BASED"] <- "Home based"
-finaldata$topology[finaldata$topology=="VENUE AND STREET"] <- "Street based"
+
+finaldata$topology[finaldata$topology=="Social Media"] <- "Home"
+finaldata$topology[finaldata$topology=="Venue,Based"] <- "Venue"
+finaldata$topology[finaldata$topology=="VENUE BASED"] <- "Venue"
+finaldata$topology[finaldata$topology=="STREET BASED"] <- "Street"
+finaldata$topology[finaldata$topology=="HOME BASED"] <- "Home"
+finaldata$topology[finaldata$topology=="VENUE AND STREET"] <- "Street"
 
 # put locations into wards
 
@@ -457,75 +606,86 @@ reingold.tilford.plot(datRDS,
                       main = "Recruitment tree by age")
 dev.off()
 
-make_reingold_tilford_plot <- function(rds.data,stratify.var,label.var,seed=NULL){
-  if(is.null(seed)){
-    set.seed(9024)
-  }
-  reingold.tilford.plot(rds.data,
-                             vertex.label.cex = 2,
-                             vertex.color = stratify.var,
-                             vertex.label = NA,
-                        main=paste("Recruitment tree by",label.var,sep = " "))
-}
+#make_reingold_tilford_plot <- function(rds.data,stratify.var,label.var,seed=NULL){
+#  if(is.null(seed)){
+#    set.seed(9024)
+#  }
+#  reingold.tilford.plot(rds.data,
+#                             vertex.label.cex = 2,
+#                             vertex.color = stratify.var,
+#                             vertex.label = NA,
+#                        main=paste("Recruitment tree by",label.var,sep = " "))
+#}
 
 # create and save recruitment trees
 tiff("images/recruitment_tree_age.tif",width = 35*0.39,height = 30*0.39,units = "in",compression = "lzw",res = 500)
 par(mfrow=c(1,1),mar=c(2,2,2,2))
-make_reingold_tilford_plot(datRDS,stratify.var = "agecat",label.var = "age")
+generate_recruitment_tree(datRDS,stratify.var = "agecat",label.var = "age")
 dev.off()
 
 # education
 tiff("images/recruitment_tree_educ.tif",width = 35*0.39,height = 30*0.39,units = "in",compression = "lzw",res = 500)
 par(mfrow=c(1,1),mar=c(2,2,2,2))
-make_reingold_tilford_plot(datRDS,stratify.var = "educ",label.var = "education")
+generate_recruitment_tree(datRDS,stratify.var = "educ",label.var = "education")
 dev.off()
 
 # location
 tiff("images/recruitment_tree_bar.tif",width = 35*0.39,height = 30*0.39,units = "in",compression = "lzw",res = 500)
 par(mfrow=c(1,1),mar=c(2,2,2,2))
-make_reingold_tilford_plot(datRDS,stratify.var = "findbar",label.var = "bar location")
+generate_recruitment_tree(datRDS,stratify.var = "findbar",label.var = "bar location")
 dev.off()
 
 # bar location
 tiff("images/recruitment_tree_lodge.tif",width = 35*0.39,height = 30*0.39,units = "in",compression = "lzw",res = 500)
 par(mfrow=c(1,1),mar=c(2,2,2,2))
-make_reingold_tilford_plot(datRDS,stratify.var = "locxn",label.var = "Location")
+generate_recruitment_tree(datRDS,stratify.var = "locxn",label.var = "Location")
 dev.off()
 
 # marital status
 tiff("images/recruitment_tree_marstatus.tif",width = 35*0.39,height = 30*0.39,units = "in",compression = "lzw",res = 500)
 par(mfrow=c(1,1),mar=c(2,2,2,2))
-make_reingold_tilford_plot(datRDS,stratify.var = "marstatus",label.var = "marital status")
+generate_recruitment_tree(datRDS,stratify.var = "marstatus",label.var = "marital status")
 dev.off()
 
 # syphilis
 tiff("images/recruitment_tree_syphilis.tif",width = 35*0.39,height = 30*0.39,units = "in",compression = "lzw",res = 500)
 par(mfrow=c(1,1),mar=c(2,2,2,2))
-make_reingold_tilford_plot(datRDS,stratify.var = "syphstatus",label.var = "syphilis")
+generate_recruitment_tree(datRDS,stratify.var = "syphstatus",label.var = "syphilis")
+dev.off()
+
+# gonorrhea
+tiff("images/recruitment_tree_gonorrhea.tif",width = 35*0.39,height = 30*0.39,units = "in",compression = "lzw",res = 500)
+par(mfrow=c(1,1),mar=c(2,2,2,2))
+generate_recruitment_tree(datRDS,stratify.var = "gono_result",label.var = "gonorrhea")
+dev.off()
+
+tiff("images/recruitment_tree_chlamydia.tif",width = 35*0.39,height = 30*0.39,units = "in",compression = "lzw",res = 500)
+par(mfrow=c(1,1),mar=c(2,2,2,2))
+generate_recruitment_tree(datRDS,stratify.var = "chlam_result",label.var = "chlamydia")
 dev.off()
 
 # topology
 tiff("images/recruitment_tree_topology.tif",width = 35*0.39,height = 30*0.39,units = "in",compression = "lzw",res = 500)
 par(mfrow=c(1,1),mar=c(2,2,2,2))
-make_reingold_tilford_plot(datRDS,stratify.var = "topology",label.var = "Topology")
+generate_recruitment_tree(datRDS,stratify.var = "topology",label.var = "typology")
 dev.off()
 
 # actual location
 tiff("images/recruitment_tree_location.tif",width = 35*0.39,height = 30*0.39,units = "in",compression = "lzw",res = 500)
 par(mfrow=c(1,1),mar=c(2,2,2,2))
-make_reingold_tilford_plot(datRDS,stratify.var = "locxn",label.var = "Location")
+make_reingold_tilford_plot(datRDS,stratify.var = "locxn",label.var = "location")
 dev.off()
 
 
 # diagnostic plots
-W <- datRDS %>%
+recruitment_data <- datRDS %>%
   group_by(seed,hivstatus) %>%
   summarise(n=length(recruit_id))
 
-ggplot(W,aes(x=seed,y=n,fill=hivstatus)) +
-  geom_bar(stat = "identity",position = "dodge") +
+ggplot(recruitment_data,aes(x=seed,y=n,fill=hivstatus)) +
+  geom_bar(stat = "identity",position = "stack") +
   theme_bw() +
-  scale_fill_manual(values = c("lightblue","lightsalmon")) +
+  scale_fill_manual(values = c("#45b39d","#f0b27a")) +
   labs(x="",y="Number of recruits",fill="HIV status",title = "Recruits per seed") +
   theme(axis.text = element_text(size = 20),
         axis.title = element_text(size = 20),
@@ -537,34 +697,35 @@ ggsave("images/recruits_seed.tiff",width = 430,height = 450,units = "mm",compres
 
 # summary figure of recruits by wave
 
-newdat <- datRDS %>%
+recruit_wave_hiv <- datRDS %>%
   group_by(wave,hivstatus) %>%
   summarise(nrecruit=length(recruit_id))
 
-newdat_syph <- datRDS %>%
+recruit_wave_syphilis <- datRDS %>%
   group_by(wave,syphstatus) %>%
   summarise(nrecruit=length(recruit_id))
 
-ggplot(newdat,aes(x=wave,y=nrecruit,colour=hivstatus)) +
+ggplot(recruit_wave_hiv,aes(x=wave,y=nrecruit,colour=hivstatus)) +
   geom_line(size=1.5) +
   theme_bw()+
-  scale_colour_manual(values = c("darkgreen","gold"))+
+  scale_colour_manual(values = c("lightsalmon","steelblue"))+
   scale_x_continuous(breaks = c(seq(0,7,1)))+
-  labs(x="Wave",y="Number of recruits",title = "Recruits by wave",colour="HIV status") +
+  labs(x="Wave",y="Number of recruits",title = "Recruits by wave",colour="HIV") +
   theme(axis.text = element_text(size = 20),
         axis.title = element_text(size = 20),
         legend.text = element_text(size = 21),
         legend.title = element_text(size = 21),
         legend.position = c(0.1,0.93),
         plot.title = element_text(size = 22))
-ggsave("images/recruits_wave1.tiff",width = 300,height = 350,units = "mm",compression = "lzw")
+ggsave("images/recruits_wave_hiv.tiff",width = 300,height = 350,units = "mm",compression = "lzw")
 
 # plot recruits by wave for syphilis
 
-ggplot(newdat_syph,aes(x=wave,y=nrecruit,colour=syphstatus)) +
+ggplot(recruit_wave_syphilis,aes(x=wave,y=nrecruit,colour=syphstatus)) +
   geom_line(size=1.5) +
   theme_bw()+
-  scale_colour_manual(values = c("darkgreen","gold"))+
+  #xlim(0,7) +
+  scale_colour_manual(values = c("lightsalmon","steelblue"))+
   scale_x_continuous(breaks = c(seq(0,7,1)))+
   labs(x="Wave",y="Number of recruits",title = "Recruits by wave",colour="Syphilis status") +
   theme(axis.text = element_text(size = 20),
@@ -573,8 +734,45 @@ ggplot(newdat_syph,aes(x=wave,y=nrecruit,colour=syphstatus)) +
         legend.title = element_text(size = 20),
         legend.position = c(0.1,0.93),
         plot.title = element_text(size = 22))
-ggsave("images/recruits_wave2.tiff",width = 300,height = 350,units = "mm",compression = "lzw")
+ggsave("images/recruits_wave_syphilis.tiff",width = 300,height = 350,units = "mm",compression = "lzw")
 
+plot_recruitment_wave <- function(summary.data,legend.title,outcome.var=c("HIV","Syphilis")){
+  outcome.var <- match.arg(outcome.var)
+  if(outcome.var=="HIV"){
+    p <- ggplot(summary.data,aes(x=wave,y=nrecruit,colour=hivstatus)) +
+      geom_line(size=1.5) +
+      theme_bw()+
+      scale_colour_manual(values = c("lightsalmon","steelblue"))+
+      scale_x_continuous(breaks = c(seq(0,7,1)))+
+      labs(x="Wave",y="Number of recruits",title = "Recruits by wave",colour=legend.title,caption = "There were 7 recruitment waves") +
+      theme(axis.text = element_text(size = 20),
+            axis.title = element_text(size = 20),
+            legend.text = element_text(size = 20),
+            legend.title = element_text(size = 20),
+            legend.position = c(0.1,0.93),
+            plot.title = element_text(size = 22),
+            plot.caption = element_text(size = 18))
+    return(p)
+  }else{
+    p <- ggplot(summary.data,aes(x=wave,y=nrecruit,colour=syphstatus)) +
+      geom_line(size=1.5) +
+      theme_bw()+
+      scale_colour_manual(values = c("lightsalmon","steelblue"))+
+      scale_x_continuous(breaks = c(seq(0,7,1)))+
+      labs(x="Wave",y="Number of recruits",title = "Recruits by wave",colour=legend.title,caption = "There were 7 recruitment waves") +
+      theme(axis.text = element_text(size = 20),
+            axis.title = element_text(size = 20),
+            legend.text = element_text(size = 20),
+            legend.title = element_text(size = 20),
+            legend.position = c(0.1,0.93),
+            plot.title = element_text(size = 22),
+            plot.caption = element_text(size = 18))
+  }
+  return(p)
+}
+
+plot_recruitment_wave(summary.data = newdat,legend.title = "HIV",outcome.var = "HIV")
+plot_recruitment_wave(summary.data = newdat_syph,legend.title = "Syphilis",outcome.var = "Syphilis")
 # network size by wave
 
 d1 <- plot(datRDS,plot.type = "Recruits by wave",stratify.by = "hivstatus")
@@ -591,31 +789,161 @@ rds_estim_hiv <- RDS.II.estimates(datRDS,outcome.variable = "hivstatus")
 
 rds_estim_syph <- RDS.II.estimates(datRDS,outcome.variable = "syphstatus")
 rds_estim_lox <- RDS.II.estimates(datRDS,outcome.variable = "locxn")
-rds_estim_lox <- RDS.II.estimates(datRDS[datRDS$locxn,],outcome.variable = "hivstatus")
+#rds_estim_lox <- RDS.II.estimates(datRDS[datRDS$locxn,],outcome.variable = "hivstatus")
 
 RDS.I.estimates(datRDS,outcome.variable = "hivstatus",smoothed = T)
 
-# ------------------------------ compare weights by outcome ------------------------------------------------------
-# RDS-II
-datRDS$wt_hiv <- rds.I.weights(datRDS,outcome.variable = "hivstatus")
-datRDS$wt_syph <- rds.I.weights(datRDS,outcome.variable = "syphstatus")
-
-# compute means
-mean(datRDS$wt_hiv[datRDS$hivstatus=="Negative"])
-mean(datRDS$wt_hiv[datRDS$hivstatus=="Positive"])
-
-mean(datRDS$wt_syph[datRDS$syphstatus=="Positive"])
-mean(datRDS$wt_syph[datRDS$syphstatus=="Negative"])
+# estimates by location
+venue <- c("Bangwe","Blantyre","Chadzunda","Kachere","Kameza","Lunzu","Machinjiri","Manase","Manje","Naperi","Ndirande","Zingwangwa")
+venue_data <- list()
+for(i in 1:length(venue)){
+  venue_data[[i]] <- datRDS[datRDS$locxn == venue[i],]
+}
 
 
-t.test(wt_hiv ~ hivstatus, data = datRDS)
+# list all prevalence
+rds_estim_list <- list()
+for(i in 1:length(venue)){
+  rds_estim_list[[i]] <- RDS.II.estimates(venue_data[[i]],outcome.variable = "hivstatus")
+}
 
+# estimates by typology
+
+rds_estim_venue <- RDS.II.estimates(datRDS[datRDS$topology == "Venue",],outcome.variable = "hivstatus")
+rds_estim_home <- RDS.II.estimates(datRDS[datRDS$topology == "Home",],outcome.variable = "hivstatus")
+rds_estim_str <- RDS.II.estimates(datRDS[datRDS$topology == "Street",],outcome.variable = "hivstatus")
+
+
+# map prevalence by point location
+
+location_prev_data <- data.frame(location = c("Bangwe","Blantyre","Chadzunda","Kachere","Kameza","Lunzu","Machinjiri","Manase","Manje","Naperi","Ndirande","Zingwangwa"),
+           long = c(35.096,35.004,34.953,35.083,35.011,35.021,35.059,34.978,35.012,35.014,35.040,35.013),
+           lat = c(-15.815,-15.788,-15.912,-15.793,-15.786,-15.653,-15.725,-15.812,-15.851,-15.809,-15.778,-15.818),
+           prev = c(0.84,0.86,0.78,0.78,0.39,0.68,0.67,0.77,0.54,0.60,0.72,0.67))
+
+location_prev_data_sf <- st_as_sf(location_prev_data,coords = c("long","lat"),crs = 4326)
+
+tm_shape(blantyre) +
+  tm_polygons(border.col = "black",col = "white",lwd = 2) +
+  tm_shape(blantyre_city) +
+  tm_polygons(border.col = "black",col = "white",lwd = 2) +
+  tm_shape(location_prev_data_sf) +
+  tm_bubbles(size = "prev",shape = 19, col = "indianred") + 
+  tm_scale_bar(position = c("right","bottom"),text.size = 1.5,width = 3) +
+  tm_layout(frame = T,
+            asp = 1,
+            frame.lwd = 3,
+            legend.text.size = 1.5,
+            legend.title.size = 1.5)
+
+# create boundaries based on proximity
+bangwe <- spatial_BT_city %>% 
+  filter(TA_NAME == "Bangwe Ward" | TA_NAME == "Bangwe Mthandizi Ward" | TA_NAME == "Mzedi Ward") %>%
+  mutate(fsw_area = "Bangwe") %>%
+  mutate(prevalence = 0.84)
+
+blantyre_cbd <- spatial_BT_city %>%
+  filter(TA_NAME == "Blantyre City Centre Ward") %>%
+  mutate(fsw_area = "Blantyre CBD") %>%
+  mutate(prevalence = 0.86)
+
+kachere <- spatial_BT_city %>%
+  filter(TA_NAME == "Mapanga Ward") %>%
+  mutate(fsw_area = "Kachere") %>%
+  mutate(prevalence = 0.78)
+
+manase <- spatial_BT_city %>%
+  filter(TA_NAME == "Blantyre South Ward") %>%
+  mutate(fsw_area = "Manase") %>%
+  mutate(prevalence = 0.79)
+
+kameza <- spatial_BT_city %>%
+  filter(EA_CODE %in% c(31531019,31531008,31531009,31532026,31532025,31531020,31531007)) %>%
+  mutate(fsw_area = "Kameza") %>%
+  mutate(prevalence = 0.39)
+
+machinjiri <- spatial_BT_city %>%
+  filter(TA_NAME == "Nkolokoti Ward") %>%
+  mutate(fsw_area = "Machinjiri") %>%
+  mutate(prevalence = 0.67)
+
+naperi <- spatial_BT_city %>%
+  filter(EA_CODE %in% c(31547003,31547002,31547011,31547004,3155009)) %>%
+  mutate(fsw_area = "Naperi") %>%
+  mutate(prevalence = 0.60)
+
+zingwangwa <- spatial_BT_city %>%
+  filter(EA_CODE %in% c(31550011,31550014,31550010,31550013,31550015,31550012,31550012,31550007)) %>%
+  mutate(fsw_area = "Zingwangwa") %>%
+  mutate(prevalence = 0.67)
+
+manje <- spatial_BT_city %>%
+  filter(EA_CODE %in% c(31553059,31553058,31553061,31553062,31553049,31553056,31553057)) %>%
+  mutate(fsw_area = "Manje") %>%
+  mutate(prevalence = 0.54)
+
+ndirande <- spatial_BT_city %>%
+  filter(TA_NAME %in% c("Ndirande Makata Ward","Ndirande Matope Ward","Ndirande Gamulani Ward")) %>%
+  mutate(fsw_area = "Ndirande") %>%
+  mutate(prevalence = 0.72)
+
+# combine data
+all_urban_data <- bind_rows(bangwe,blantyre_cbd,kameza,kachere,manase,naperi,zingwangwa,manje,machinjiri,ndirande)
+
+# map disease prevalence by location
+#mapping_data <- spatial_BT_city %>%
+#  mutate(prevalence = case_when(
+#    TA_NAME == "Bangwe Ward" ~ 0.84,
+#    TA_NAME == "Bangwe Mthandizi Ward" ~ 0.84,
+#    TA_NAME == "Mzedi Ward" ~ 0.84,
+#    TA_NAME == "Blantyre City Centre Ward" ~ 0.86,
+#    TA_NAME == "Mapanga Ward" ~ 0.78,
+#    TA_NAME == "South Lunzu Ward" ~ 0.39,
+#    TA_NAME == "Nkolokoti Ward" ~ 0.67,  # Nkolokoti for Machinjiri
+#    TA_NAME == "Blantyre South Ward" ~ 0.77,
+#    TA_NAME == "Soche East Ward" ~ 0.60,
+#    TA_NAME == "Misesa Ward" ~ 0.54,
+#    TA_NAME == "Ndirande Makata Ward" ~ 0.72,
+#    TA_NAME == "Ndirande Matope Ward" ~ 0.72,
+#    TA_NAME == "Ndirande Gamulani Ward" ~ 0.72,
+#    TA_NAME == "Green Corner Ward" ~ 0.67
+#  ))
+
+# remove names from other EAs and only retain one name to reduce clutter
+all_urban_data$venue_name <- NA
+all_urban_data[which(all_urban_data$EA_CODE == 31545003),"venue_name"] <- "Bangwe"
+all_urban_data[which(all_urban_data$EA_CODE == 31541006),"venue_name"] <- "Blantyre CBD"
+all_urban_data[which(all_urban_data$EA_CODE == 31533035),"venue_name"] <- "Kachere"
+all_urban_data[which(all_urban_data$EA_CODE == 31548005),"venue_name"] <- "Manase"
+all_urban_data[which(all_urban_data$EA_CODE == 31550013),"venue_name"] <- "Zingwangwa"
+all_urban_data[which(all_urban_data$EA_CODE == 31553049),"venue_name"] <- "Manje"
+all_urban_data[which(all_urban_data$EA_CODE == 31534011),"venue_name"] <- "Machinjiri"
+all_urban_data[which(all_urban_data$EA_CODE == 31536901),"venue_name"] <- "Ndirande"
+all_urban_data[which(all_urban_data$EA_CODE == 31531009),"venue_name"] <- "Kameza"
+all_urban_data[which(all_urban_data$EA_CODE == 31547002),"venue_name"] <- "Naperi"
+
+cluster_location_prev <- tm_shape(blantyre_city) +
+  tm_polygons(border.col = "black",lwd = 2,col = "#ebedef") +
+tm_shape(all_urban_data) +
+  tm_polygons(border.col = "black",col = "prevalence",lwd = 2,palette = RColorBrewer::brewer.pal(n_distinct(all_urban_data$fsw_area),"Spectral"),title = "Prevalence") +
+  tm_scale_bar(position = c("left","bottom"),text.size = 1.4,width = 3) +
+  tm_compass(type = "4star",size = 3,position = c("right","bottom"),text.size = 1) +
+  tm_text("venue_name",col = "white",size = 1.1,fontface = "bold") +
+  tm_layout(frame = T,
+            asp = 1,
+            frame.lwd = 3,
+            legend.outside = TRUE,
+            legend.outside.position = "right",
+            legend.text.size = 1.3,
+            legend.title.size = 1.5)
+tmap_save(cluster_location_prev,"images/cluster_location_prev.png",width = 400,height = 400,units = "mm")
+  
 # ----------------------------------------------- homophily analysis ---------------------------------------------
 
 get_homophily_estimates(rds.data = datRDS,outcome.var = "hivstatus", estim.type = "RDS-II",recruitment = T)
 get_homophily_estimates(rds.data = datRDS,outcome.var = "syphstatus", estim.type = "RDS-II",recruitment = T)
 get_homophily_estimates(rds.data = datRDS,outcome.var = "marstatus", estim.type = "RDS-II",recruitment = T)
-#get_homophily_estimates(rds.data = datRDS,outcome.var = "findbar",estim.type = "RDS-II",recruitment = T)
+get_homophily_estimates(rds.data = datRDS,outcome.var = "num_sex",estim.type = "RDS-II",recruitment = T)
 #get_homophily_estimates(rds.data = datRDS,outcome.var = "lodgefind",estim.type = "RDS-II",recruitment = T)
 
 # convergence plot for hiv
@@ -624,7 +952,7 @@ rds_convergence_plot(datRDS,
                  est.func = RDS.II.estimates,
                  n.eval.points = 30,
                  plot.title = "HIV",
-                 max_waves = 7)
+                 max.waves = 7)
 ggsave("images/convergence_hiv.tiff",width = 300,height = 350,compression="lzw",units="mm")
 
 # convergence for syphilis
@@ -633,7 +961,7 @@ rds_convergence_plot(datRDS,
                      est.func = RDS.II.estimates,
                      n.eval.points = 30,
                      plot.title = "Syphilis",
-                     max_waves = 7)
+                     max.waves = 7)
 ggsave("images/convergence_syphilis.tiff",width = 300,height = 350,compression="lzw",units="mm")
 
 # ------------------------------------------- bottleneck plots -------------------------------------------------------------
@@ -649,6 +977,7 @@ ggsave("images/convergence_syphilis.tiff",width = 300,height = 350,compression="
 
 make_bootstrap_contingency_test(rds_data = datRDS,row_var = "age",col_var = "hivstatus",nsim = 1000)
 make_bootstrap_contingency_test(rds_data = datRDS,row_var = "agecat",col_var = "hivstatus",nsim = 1000)
+make_bootstrap_contingency_test(rds_data = datRDS,row_var = "agecat",col_var = "syphstatus",nsim = 1000)
 
 # -------------------------------- estimate incidence -------------------------------------------------------------
 bootstrap.incidence(datRDS,
@@ -672,33 +1001,77 @@ prop_RDS_II <- RDS.bootstrap.intervals(datRDS,
 datRDS$hiv_rdswght <- rds.I.weights(datRDS,outcome.variable = "hivstatus")
 datRDS$syph_rdswght <- rds.I.weights(datRDS,outcome.variable = "syphstatus")
 
-#dat$rds_wght <- compute.weights(datRDS,weight.type = "RDS-I")
+datRDS$rds_wght <- compute.weights(datRDS,weight.type = "RDS-II") # sampling weights
 
 # fit a simple glm
 # process some variables
 model_data <- datRDS %>%
+  mutate(educ_level = educ) %>%
   mutate(educ_level = case_when(
     educ == "MSCE" ~ "Secondary",
     educ == "JCE" ~ "Secondary",
     educ == "Tertiary" ~ "Secondary"))
 
 # model without weights
-m1 <- glm(hivresult ~ calc_age + syphstatus + locxn + educ,data = datRDS,family = "binomial")
+# recode missing values
+# combine drinkin categories
+# change reference categories for some variables in the model
+datRDS$syphstatus <- relevel(datRDS$syphstatus,ref = "Negative")
+datRDS$condomuse <- relevel(datRDS$condomuse,ref = "No")
+datRDS$stdy_prtner <- relevel(datRDS$stdy_prtner,ref = "No")
+datRDS$num_sex[datRDS$num_sex==888] <- NA
+datRDS$drink_freq <- relevel(datRDS$drink_freq,ref = "Never")
+datRDS$stdy_prtner_hiv <- relevel(datRDS$stdy_prtner_hiv,ref = "HIV -ve")
+datRDS$condm_2wk <- relevel(datRDS$condm_2wk,ref = "Don't remember")
+
+# add ART and prep use to the covariate list
+
+m1 <- glm(hivresult ~ calc_age + stdy_prtner + num_sex + syphstatus + condomuse + drink_freq,data = datRDS,family = "binomial")
 summary(m1)
+sjPlot::tab_model(m1)
+sjPlot::plot_model(m1)
+sjPlot::plot_model(m1,type = "pred",terms = "agecat")
 res <- data.frame(OR=exp(coef(m1)),ci = exp(confint(m1)))
 
-# model with weigths
-m2 <- glm(hivresult ~ calc_age + syphstatus + educ + (1|locxn),data = datRDS,weights = hiv_rdswght,family = "binomial")
+m2 <- glm(hivresult ~ calc_age + stdy_prtner + num_sex + syphstatus + condomuse,data = datRDS,family = "binomial")
 summary(m2)
+lmtest::lrtest(m1,m2)
 
-# mixed model 
+sjPlot::tab_model(m2)
+sjPlot::plot_model(m2,type = "pred",terms = "locxn")
 
-m3 <- glmer(hivresult ~ calc_age + syphstatus + educ + locxn,
-            family = "binomial",
-            data = model_data)
+# glm model with weigths
+m3 <- glm(hivresult ~ agegrp + stdy_prtner + num_sex + syphstatus + condomuse + stdy_prtner_hiv,data = datRDS,family = "binomial",weights = sexworkerKnow)
+
 summary(m3)
-##  ---------------------------------- Baseline characteristics -----------------------------------------------------
+sjPlot::tab_model(m3)
 
+# mixed model with weights
+
+m4 <- glmer(hivresult ~ calc_age + stdy_prtner + num_sex + syphstatus + condomuse + drink_freq + (1|locxn),
+            family = "binomial",
+            weights = sexworkerKnow,
+            data = datRDS)
+summary(m4)
+tab_model(m4)
+
+m5 <- glmer(hivresult ~ agegrp + stdy_prtner + num_sex + syphstatus + condomuse + drink_freq + (1|locxn),
+            family = "binomial",
+            data = datRDS)
+tab_model(m5)
+
+# plot random effects
+randoms <- ranef(m4, condVar = TRUE)
+qq <- attr(ranef(m4, condVar = TRUE)[[1]], "condVar")
+rand.interc<-randoms$locxn
+
+lattice::dotplot(randoms)
+
+df<-data.frame(Intercepts=randoms$locxn[,1],
+               sd.interc=2*sqrt(qq[,,1:length(qq)]),
+               lev.names=rownames(rand.interc))
+##  ---------------------------------- Baseline characteristics -----------------------------------------------------
+baseline_data <- datRDS
 # baseline tables
 tabcontrols  <- tableby.control(test=F, total=TRUE,
                                 numeric.test="kwt", cat.test="fe",  
@@ -712,8 +1085,8 @@ tabcontrols  <- tableby.control(test=F, total=TRUE,
                                   meansd="Mean(SD)",
                                   medianq1q3='Median(IQR)'),
                                 simulate.p.value = T)
-
-tablabs <- list(calc_age="Age",lengthstay="Length of stay",
+#labels(baseseline_data) <- c(calc_age = "Age (yrs)")
+labels(baseline_data) <- c(calc_age="Age (yrs)",lengthstay="Length of stay",
                 findbar="Bars/Nightclubs/Entertaiment place",
                 findonline="Phone/WhatsApp/Internet",
                 agecat="Age group",
@@ -729,10 +1102,10 @@ tablabs <- list(calc_age="Age",lengthstay="Length of stay",
                 sexworkerSeen="Sex seen in past month",
                 sexworkerRecruit="Sex worker recruited")
 
-tab1 <- tableby(wave~calc_age+agecat+syphstatus+marstatus+lengthstay+findbar+findonline+mrktfind+trucksfind+
+tab1 <- tableby(hivstatus~calc_age+agecat+syphstatus+marstatus+lengthstay+findbar+findonline+mrktfind+trucksfind+
                   lodgefind+educ+knwpersoncoupon+sexworkerKnow +
                   sexworkerSeen + sexworkerRecruit,
-                data = datRDS,control = tabcontrols)
+                data = baseline_data,control = tabcontrols)
 U = summary(tab1,labelTranslations = tablabs,text = T)
 write2word(U,"baseline_table_characteristics.doc")
 write2html(U,"baseline_RDS.htm")
@@ -742,6 +1115,7 @@ U <- prop.table(table(rds$findonline,rds$educ),2)*100
 W <- prop.table(table(rds$findbar,rds$educ),2)*100
 Q <- prop.table(table(rds$mrktfind,rds$educ),2)*100
 barplot(U,beside = T)
+
 
 # baseline figures
 datasumm <- rds %>%
@@ -904,13 +1278,13 @@ h1 <- ggplot(lastTest,aes(x=whenhivtest,y=nprop))+
 ggsave("images/last_hiv_test.tiff",width = 500,height = 450,units = "mm",compression="lzw")
 
 # network sizes
-agepositive <- rds %>%
-  filter(!is.na(hivres)) %>%
-  group_by(hivres,agecat) %>%
+agepositive <- datRDS %>%
+  #filter(!is.na(hivres)) %>%
+  group_by(hivstatus,agecat) %>%
   summarise(nres=n_distinct(pid)) %>%
   mutate(nprop=nres/sum(nres)*100)
 
-ggplot(agepositive,aes(x=agecat,y=nprop,fill=hivres))+
+ggplot(agepositive,aes(x=agecat,y=nprop,fill=hivstatus))+
   geom_bar(stat = "identity",position = position_dodge(preserve = "single"))+
   theme_minimal()+
   xlab("")+
@@ -918,12 +1292,12 @@ ggplot(agepositive,aes(x=agecat,y=nprop,fill=hivres))+
   ylim(0,100) +
   labs(title = "HIV status by age") +
   scale_fill_manual(values = c("salmon","steelblue","gold"))+
-  theme(axis.text = element_text(size = 38),
-        axis.title = element_text(size = 38),
+  theme(axis.text = element_text(size = 20),
+        axis.title = element_text(size = 20),
         legend.title = element_blank(),
-        legend.text = element_text(size = 33),
+        legend.text = element_text(size = 20),
         legend.position = c(.87,.87),
-        plot.title = element_text(size = 40))
+        plot.title = element_text(size = 20))
 ggsave("images/hiv_age.tiff",width = 500,height = 450,units = "mm",compression="lzw")
 
 # network by age
@@ -986,11 +1360,11 @@ ggsave("images/testing_future_risk.tiff",height = 600,width = 500,units = "mm",c
 # --------------------------------------------------------------------------------------------------------------------------------------
 # relationships between mental health, alcohol abuse and violence
 mentalHealth <- rds %>%
-  group_by(violence01,drink_dy,think_deep) %>%
+  group_by(violence01,drink_freq,think_deep) %>%
   summarise(nres=n()) %>%
   mutate(nprop=nres/sum(nres)*100)
 
-ggplot(mentalHealth,aes(x=drink_dy,y=nprop,fill=think_deep))+
+ggplot(mentalHealth,aes(x=drink_freq,y=nprop,fill=think_deep))+
   geom_bar(stat = "identity",fill="salmon")+
   theme_bw() +
   xlab("")+
@@ -1034,3 +1408,8 @@ write.csv(dataRemainNeg,"data/hivnegData.csv",row.names = F)
 # to do
 
 # seeds characteristics table
+
+# participants who found clients online
+online_clients <-  finaldata %>%
+  filter(onlinefind == 1)
+write.csv(online_clients,file = "data/online_clients.csv",row.names = F)
