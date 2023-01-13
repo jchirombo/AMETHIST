@@ -4,7 +4,7 @@ get_recruiter_id <- function(data){
   for(i in 1:nrow(data)){
     j <- which(data$recruit_id[i] == data$seed_coupon1|data$recruit_id[i] == data$seed_coupon2)
     if(length(j)==0){
-      idx[i] <- "Seed" # review this part,add recruiter_id to the condition
+      idx[i] <- "Seed" 
     } else {
       idx[i] <- data$pid[j]
     }
@@ -12,10 +12,79 @@ get_recruiter_id <- function(data){
   return(idx)
 }
 
+plot_fsw_location <- function(plot.var=c("Institution","Label")){
+  plot.var <- match.arg(plot.var)
+  if(plot.var == "Institution"){
+    tm_shape(blantyre) +
+      tm_polygons(border.col = "black",col = "white",lwd = 2) +
+      tm_shape(blantyre_city) +
+      tm_polygons(border.col = "black",lwd = 2,col = "white") +
+      tm_shape(blantyre_pts) +
+      tm_dots(plot.var,size = 0.8,palette = c("lightsalmon","steelblue"))+
+      tm_scale_bar(position = c("right","bottom"),text.size = 1.5,width = 3) +
+      tm_layout(frame = T,
+                asp = 1,
+                frame.lwd = 3,
+                legend.text.size = 1.5,
+                legend.title.size = 1.5)
+  } else{
+    nc <- 9
+    tm_shape(blantyre) +
+      tm_polygons(border.col = "black",col = "white") +
+      tm_shape(blantyre_city) +
+      tm_polygons(border.col = "black",col = "white") +
+      tm_shape(blantyre_pts) +
+      tm_dots(plot.var,size = 0.8,palette = RColorBrewer::brewer.pal(nc,"Set1")) +
+      tm_scale_bar(position = c("left","bottom"),text.size = 1.5,width = 3) +
+      tm_layout(frame = T,
+                asp = 1,
+                frame.lwd = 3,
+                legend.outside = TRUE,
+                legend.text.size = 1.5,
+                legend.title.size = 1.5)
+  }
+}
+
+# function to plot the number of recruits by wave
+plot_recruitment_wave <- function(summary.data,legend.title,outcome.var=c("HIV","Syphilis")){
+  outcome.var <- match.arg(outcome.var)
+  if(outcome.var=="HIV"){
+    p <- ggplot(summary.data,aes(x=wave,y=nrecruit,colour=hivstatus)) +
+      geom_line(size=1.5) +
+      theme_bw()+
+      scale_colour_manual(values = c("#f0b27a","#84e9d4"))+
+      scale_x_continuous(breaks = c(seq(0,7,1)))+
+      labs(x="Wave",y="Number of recruits",title = "Recruits by wave",colour=legend.title,caption = "There were 7 recruitment waves") +
+      theme(axis.text = element_text(size = 20),
+            axis.title = element_text(size = 20),
+            legend.text = element_text(size = 20),
+            legend.title = element_text(size = 20),
+            legend.position = c(0.1,0.93),
+            plot.title = element_text(size = 22),
+            plot.caption = element_text(size = 18))
+    return(p)
+  }else{
+    p <- ggplot(summary.data,aes(x=wave,y=nrecruit,colour=syphstatus)) +
+      geom_line(size=1.5) +
+      theme_bw()+
+      scale_colour_manual(values = c("#f0b27a","#84e9d4"))+
+      scale_x_continuous(breaks = c(seq(0,7,1)))+
+      labs(x="Wave",y="Number of recruits",title = "Recruits by wave",colour=legend.title,caption = "There were 7 recruitment waves") +
+      theme(axis.text = element_text(size = 20),
+            axis.title = element_text(size = 20),
+            legend.text = element_text(size = 20),
+            legend.title = element_text(size = 20),
+            legend.position = c(0.1,0.93),
+            plot.title = element_text(size = 22),
+            plot.caption = element_text(size = 18))
+  }
+  return(p)
+}
+
 # function to generate convergence  plot
-# this is an edit of the function int the RDS package
+# this is an edit of the function in the RDS package
 rds_convergence_plot <- function (rds.data, outcome.variable, est.func = RDS.II.estimates, 
-          as.factor = FALSE, n.eval.points = 25, plot.title,max_waves, ...){
+          as.factor = FALSE, n.eval.points = 25, plot.title,max.waves, ...){
   if (as.factor) {
     for (o in outcome.variable) {
       rds.data[[o]] <- as.factor(rds.data[[o]])
@@ -45,29 +114,31 @@ rds_convergence_plot <- function (rds.data, outcome.variable, est.func = RDS.II.
         xlab("Waves") + # replace with waves
         scale_y_continuous(limits = c(0,1)) + 
         theme_bw() +
-        theme(axis.text = element_text(size = 38),
-              axis.title = element_text(size = 38))
+        theme(axis.text = element_text(size = 22),
+              axis.title = element_text(size = 22))
       p <- p + geom_hline(data = datl, aes(yintercept = value,color = as.factor(Var2)), linetype = 2, alpha = 0.5)
       p
     }
     else {
       dat <- data.frame(value = e[, 1], Var1 = attr(e,"n"))
       # add wave column
-      dat$W <- 0:max_waves 
+      dat$W <- NA
+      dat$W <- 0:max.waves 
       datl <- dat[nrow(dat), , drop = FALSE]
       v <- rds.data[[outcome.variable[i]]]
       rng <- if (!is.numeric(v)) c(0, 1)
       else range(v, na.rm = TRUE)
       p <- ggplot(dat) + 
         geom_line(aes(x = W, y = value),size=1.5) + # replace Var1 with W (for wave). Var1 plots number of recruitees on the x axis
-        ylab(paste("Estimated", "Proportion")) + 
-        xlab("Waves") + # replace xlab with waves
-        labs(title = plot.title)+
+        ylab(paste("Estimated","Proportion",sep = " ")) + 
+        xlab("Wave") + # replace xlab with waves
+        labs(title = paste("Convergence plot for",plot.title,sep = " "))+
         scale_y_continuous(limits = rng) +
+        scale_x_continuous(breaks = seq(0,max.waves,1)) +
         theme_bw() +
-        theme(axis.title = element_text(size = 38),
-              axis.text = element_text(size = 38),
-              plot.title = element_text(size = 38))
+        theme(axis.title = element_text(size = 22),
+              axis.text = element_text(size = 22),
+              plot.title = element_text(size = 23))
       p <- p + geom_hline(data = datl, aes(yintercept = value),linetype = 2, alpha = 0.5)
       p
     }
@@ -78,14 +149,15 @@ rds_convergence_plot <- function (rds.data, outcome.variable, est.func = RDS.II.
 }
 
 # function to plot recruitment trees
-make_reingold_tilford_plot <- function(rds.data,stratify.var,seed=NULL){
+generate_recruitment_tree <- function(rds.data,stratify.var,label.var,seed=NULL){
   if(is.null(seed)){
     set.seed(9024)
   }
   reingold.tilford.plot(rds.data,
                         vertex.label.cex = 2,
                         vertex.color = stratify.var,
-                        vertex.label = NA)
+                        vertex.label = NA,
+                        main = paste("Recruitment tree by",label.var,sep = " "))
 }
 
 # function to create contingency table and perform test of association 
@@ -111,8 +183,7 @@ get_homophily_estimates <- function(rds.data,outcome.var,estim.type=c("RDS-I","R
 # function to generate bottleneck plot
 # adapted from the RDS package function bottleneck.plot()
 
-make_bottleneck_plot <- function (rds.data, outcome.variable, est.func = RDS.II.estimates, 
-                                  as.factor = FALSE, n.eval.points = 25, ...){
+make_bottleneck_plot <- function(rds.data, outcome.variable, est.func = RDS.II.estimates, as.factor = FALSE, n.eval.points = 25, ...){
   n <- value <- Seed <- NULL
   for (o in outcome.variable) {
     if (as.factor || is.character(rds.data[[o]])) {
@@ -120,8 +191,7 @@ make_bottleneck_plot <- function (rds.data, outcome.variable, est.func = RDS.II.
     }
   }
   f <- function(v, dat) {
-    est <- cumulative.estimate(dat, v, est.func, n.eval.points = n.eval.points, 
-                               ...)
+    est <- cumulative.estimate(dat, v, est.func, n.eval.points = n.eval.points,...)
     n <- attr(est, "n")
     if (ncol(est) == 1) {
       colnames(est) <- v
@@ -177,6 +247,7 @@ make_bottleneck_plot <- function (rds.data, outcome.variable, est.func = RDS.II.
     rbind(a, b)
   }, ls, init = NULL)
   result$Seed <- as.factor(result$seed)
+  #result$wave <- 0:7 # add wave to the data
   ggplot(result, aes(x = n, y = value, color = Seed)) + 
     geom_line(size=1.5) + 
     #facet_wrap(~Var2, scales = "free_y") + 
@@ -188,5 +259,28 @@ make_bottleneck_plot <- function (rds.data, outcome.variable, est.func = RDS.II.
           axis.text = element_text(size = 20),
           legend.text = element_text(size = 20),
           legend.title = element_text(size = 21),
-          legend.position = "none")
+          legend.position = "bottom")
+}
+
+# function for convergence
+
+plot_rds_estim_convergence <- function(rds.data,outcome.variable,plot.type=c("ggplot","base")){
+  estim_mat <- RDS::cumulative.estimate(rds.data,outcome.variable)
+  estim_df <- as.data.frame(estim_mat)
+  estim_df <- dplyr::mutate(estim_df,Wave=0:(nrow(estim_df)-1))
+  plot.type <- match.arg(plot.type)
+  if(plot.type == "ggplot"){
+    p <- ggplot2::ggplot(estim_df,aes(x=Wave,y=Positive)) +
+      geom_line(size=1.6) +
+      theme_bw() +
+      ylab("Prevalence") +
+      ylim(0,1) +
+      scale_x_continuous(breaks = seq(0,7,1)) +
+      theme(axis.title = element_text(size = 20),
+            axis.text = element_text(size = 20))
+    return(p)
+  } else {
+    par(cex.axis = 1.4, cex.lab = 1.4)
+    plot(estim_df$Wave,estim_df$Positive,type = "l",lwd = 2,ylim = c(0,1))
+  }
 }
